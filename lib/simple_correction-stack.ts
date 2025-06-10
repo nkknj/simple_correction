@@ -16,18 +16,18 @@ export class SimpleCorrectionStack extends Stack {
     // 1. フロントエンド用 S3 バケット (非公開)
     const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
       websiteIndexDocument: 'index.html',
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,  // バケットレベルのパブリックアクセスをブロック
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
     });
 
-    // OAI (Origin Access Identity) を作成して CloudFront 経由のみアクセス許可
+    // OAI で CloudFront からのみアクセス許可
     const oai = new cloudfront.OriginAccessIdentity(this, 'OAI', {
       comment: 'OAI for website bucket'
     });
-    // OAI にバケットの読み取り権限を付与
     websiteBucket.grantRead(oai);
 
-    // 2. CloudFront Distribution
+    // 2. CloudFront Distribution (defaultRootObject を設定)
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
+      defaultRootObject: 'index.html',
       defaultBehavior: {
         origin: new origins.S3Origin(websiteBucket, {
           originAccessIdentity: oai
@@ -36,7 +36,15 @@ export class SimpleCorrectionStack extends Stack {
       },
     });
 
-    // 3. バックエンド Lambda 関数
+    // 3. S3 デプロイメント
+    new s3deploy.BucketDeployment(this, 'DeployWebsite', {
+      sources: [s3deploy.Source.asset(path.join(__dirname, '..', 'frontend', 'build'))],
+      destinationBucket: websiteBucket,
+      distribution,
+      distributionPaths: ['/*'],
+    });
+
+    // 4. バックエンド Lambda 関数
     const correctionLambda = new lambda.Function(this, 'CorrectionFunction', {
       runtime: lambda.Runtime.PYTHON_3_9,
       handler: 'index.lambda_handler',
@@ -47,7 +55,7 @@ export class SimpleCorrectionStack extends Stack {
       },
     });
 
-    // 4. API Gateway
+    // 5. API Gateway
     const api = new apigateway.LambdaRestApi(this, 'ApiGateway', {
       handler: correctionLambda,
       proxy: false,
@@ -59,7 +67,7 @@ export class SimpleCorrectionStack extends Stack {
     const process = api.root.addResource('process');
     process.addMethod('POST');
 
-    // 5. 出力
+    // 6. 出力
     new cdk.CfnOutput(this, 'WebsiteURL', {
       value: `https://${distribution.distributionDomainName}`
     });
