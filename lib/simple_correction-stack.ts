@@ -13,23 +13,30 @@ export class SimpleCorrectionStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // 1. フロントエンド用 S3 バケットとデプロイ
+    // 1. フロントエンド用 S3 バケット (非公開)
     const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
       websiteIndexDocument: 'index.html',
-      publicReadAccess: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,  // バケットレベルのパブリックアクセスをブロック
     });
 
-    new s3deploy.BucketDeployment(this, 'DeployWebsite', {
-      sources: [s3deploy.Source.asset(path.join(__dirname, '..', 'frontend', 'build'))],
-      destinationBucket: websiteBucket,
+    // OAI (Origin Access Identity) を作成して CloudFront 経由のみアクセス許可
+    const oai = new cloudfront.OriginAccessIdentity(this, 'OAI', {
+      comment: 'OAI for website bucket'
     });
+    // OAI にバケットの読み取り権限を付与
+    websiteBucket.grantRead(oai);
 
-    // CloudFront
+    // 2. CloudFront Distribution
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
-      defaultBehavior: { origin: new origins.S3Origin(websiteBucket) },
+      defaultBehavior: {
+        origin: new origins.S3Origin(websiteBucket, {
+          originAccessIdentity: oai
+        }),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
     });
 
-    // 2. バックエンド Lambda 関数
+    // 3. バックエンド Lambda 関数
     const correctionLambda = new lambda.Function(this, 'CorrectionFunction', {
       runtime: lambda.Runtime.PYTHON_3_9,
       handler: 'index.lambda_handler',
@@ -40,7 +47,7 @@ export class SimpleCorrectionStack extends Stack {
       },
     });
 
-    // 3. API Gateway
+    // 4. API Gateway
     const api = new apigateway.LambdaRestApi(this, 'ApiGateway', {
       handler: correctionLambda,
       proxy: false,
@@ -52,7 +59,7 @@ export class SimpleCorrectionStack extends Stack {
     const process = api.root.addResource('process');
     process.addMethod('POST');
 
-    // 4. 出力
+    // 5. 出力
     new cdk.CfnOutput(this, 'WebsiteURL', {
       value: `https://${distribution.distributionDomainName}`
     });
