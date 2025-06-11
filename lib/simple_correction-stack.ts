@@ -13,19 +13,19 @@ export class SimpleCorrectionStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
-    // 1. フロントエンド用 S3 バケット (非公開)
+    // 1. フロントエンド用 S3 バケット (非公開、ACLのみブロック)
     const websiteBucket = new s3.Bucket(this, 'WebsiteBucket', {
-      websiteIndexDocument: 'index.html',
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ACLS,  // ACLはブロックするが、バケットポリシーは許可
     });
 
-    // OAI で CloudFront からのみアクセス許可
+    // OAI（Origin Access Identity）を作成して CloudFront 経由のみアクセス許可
     const oai = new cloudfront.OriginAccessIdentity(this, 'OAI', {
       comment: 'OAI for website bucket'
     });
+    // OAI にバケットの読み取り権限を付与
     websiteBucket.grantRead(oai);
 
-    // 2. CloudFront Distribution (defaultRootObject を設定)
+    // 2. CloudFront Distribution
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       defaultRootObject: 'index.html',
       defaultBehavior: {
